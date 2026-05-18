@@ -1,0 +1,16 @@
+{
+  "appId": "com.mills.ninemenmorris",
+  "appName": "Mills",
+  "webDir": "www",
+  "backgroundColor": "#0d0d0d",
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 0
+    }
+  }
+}

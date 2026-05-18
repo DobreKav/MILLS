@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+www/
+android/build/
+android/.gradle/
+android/app/build/
+android/captures/
+*.apk
+*.aab
+
+# Gradle wrapper (keep gradlew but ignore local cache)
+.gradle/
+
+# Android Studio / IDE
+.idea/
+*.iml
+local.properties
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
