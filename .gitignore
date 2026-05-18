@@ -10,6 +10,11 @@ android/captures/
 *.apk
 *.aab
 
+# Keystore & signing secrets — NEVER commit these
+*.jks
+*.keystore
+android/keystore.properties
+
 # Gradle wrapper (keep gradlew but ignore local cache)
 .gradle/
 

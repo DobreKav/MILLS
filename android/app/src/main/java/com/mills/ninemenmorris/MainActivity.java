@@ -21,21 +21,32 @@ import com.google.android.gms.ads.MobileAds;
 import com.google.android.gms.ads.RequestConfiguration;
 import com.google.android.gms.ads.interstitial.InterstitialAd;
 import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback;
+import com.google.android.gms.ads.rewarded.RewardedAd;
+import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback;
+import com.google.android.gms.games.PlayGames;
+import com.google.android.gms.games.PlayGamesSdk;
 import java.util.Arrays;
 
 public class MainActivity extends BridgeActivity {
 
     private static final String TEST_BANNER_ID       = "ca-app-pub-3940256099942544/6300978111";
     private static final String TEST_INTERSTITIAL_ID = "ca-app-pub-3940256099942544/1033173712";
-    // Physical test device hash (from logcat "Use RequestConfiguration..." message)
+    private static final String TEST_REWARDED_ID     = "ca-app-pub-3940256099942544/5224354917";
     private static final String TEST_DEVICE_ID       = "8A68A10FE669909D6CF3103FDD4A7204";
 
     private InterstitialAd mInterstitialAd;
+    private RewardedAd     mRewardedAd;
+
+    // Play Games profile (populated after sign-in)
+    private String pgPlayerId   = null;
+    private String pgPlayerName = null;
+    private boolean pgSignedIn  = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         hideSystemBars();
+        initPlayGames();
         initAdMob();
     }
 
@@ -65,22 +76,74 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
+    // ── Google Play Games sign-in ──────────────────────────
+    private void initPlayGames() {
+        try {
+            PlayGamesSdk.initialize(this);
+            PlayGames.getGamesSignInClient(this)
+                .isAuthenticated()
+                .addOnCompleteListener(task -> {
+                    boolean authenticated = task.isSuccessful() && task.getResult().isAuthenticated();
+                    if (authenticated) {
+                        fetchPlayGamesProfile();
+                    } else {
+                        // Silently attempt sign-in
+                        PlayGames.getGamesSignInClient(this).signIn()
+                            .addOnCompleteListener(t -> {
+                                if (t.isSuccessful() && t.getResult().isAuthenticated()) {
+                                    fetchPlayGamesProfile();
+                                }
+                            });
+                    }
+                });
+        } catch (Exception e) {
+            // Play Games not available on this device — silently ignore
+        }
+    }
+
+    private void fetchPlayGamesProfile() {
+        try {
+            PlayGames.getPlayersClient(this).getCurrentPlayer()
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful() && task.getResult() != null) {
+                        com.google.android.gms.games.Player player = task.getResult();
+                        pgPlayerId   = player.getPlayerId();
+                        pgPlayerName = player.getDisplayName();
+                        pgSignedIn   = true;
+                        // Notify JS that sign-in is ready
+                        notifyJsPlayGamesReady();
+                    }
+                });
+        } catch (Exception e) {
+            // Ignore
+        }
+    }
+
+    private void notifyJsPlayGamesReady() {
+        runOnUiThread(() ->
+            getBridge().getWebView().evaluateJavascript(
+                "window.onPlayGamesReady && window.onPlayGamesReady("
+                + "'" + pgPlayerId.replace("'","") + "',"
+                + "'" + pgPlayerName.replace("'","\\u0027") + "')", null)
+        );
+    }
+
+    // ── AdMob ──────────────────────────────────────────────
     private void initAdMob() {
-        // Register this device as a test device so test ads display on real hardware
         MobileAds.setRequestConfiguration(new RequestConfiguration.Builder()
             .setTestDeviceIds(Arrays.asList(TEST_DEVICE_ID))
             .build());
 
-        // Expose JS bridge immediately — before async initialize completes
         getBridge().getWebView().addJavascriptInterface(new AdsJsBridge(), "MillsAds");
 
         MobileAds.initialize(this, initializationStatus -> runOnUiThread(() -> {
             setupBanner();
             loadInterstitial();
+            loadRewarded();
         }));
     }
 
-    // ── Adaptive full-width banner ─────────────────────────
+    // ── Banner ─────────────────────────────────────────────
     private void setupBanner() {
         AdView adView = new AdView(this);
         adView.setAdSize(getAdaptiveBannerSize());
@@ -115,7 +178,7 @@ public class MainActivity extends BridgeActivity {
                         @Override
                         public void onAdDismissedFullScreenContent() {
                             mInterstitialAd = null;
-                            loadInterstitial(); // pre-load next ad
+                            loadInterstitial();
                         }
                     });
                 }
@@ -128,8 +191,46 @@ public class MainActivity extends BridgeActivity {
 
     private void showInterstitialInternal() {
         runOnUiThread(() -> {
-            if (mInterstitialAd != null) {
-                mInterstitialAd.show(this);
+            if (mInterstitialAd != null) mInterstitialAd.show(this);
+        });
+    }
+
+    // ── Rewarded ───────────────────────────────────────────
+    private void loadRewarded() {
+        RewardedAd.load(this, TEST_REWARDED_ID,
+            new AdRequest.Builder().build(),
+            new RewardedAdLoadCallback() {
+                @Override
+                public void onAdLoaded(@NonNull RewardedAd ad) {
+                    mRewardedAd = ad;
+                    ad.setFullScreenContentCallback(new FullScreenContentCallback() {
+                        @Override
+                        public void onAdDismissedFullScreenContent() {
+                            mRewardedAd = null;
+                            loadRewarded();
+                        }
+                    });
+                }
+                @Override
+                public void onAdFailedToLoad(@NonNull LoadAdError err) {
+                    mRewardedAd = null;
+                }
+            });
+    }
+
+    private void showRewardedInternal() {
+        runOnUiThread(() -> {
+            if (mRewardedAd != null) {
+                mRewardedAd.show(this, rewardItem ->
+                    getBridge().getWebView().post(() ->
+                        getBridge().getWebView().evaluateJavascript(
+                            "window.onHintRewardEarned && window.onHintRewardEarned()", null))
+                );
+            } else {
+                getBridge().getWebView().post(() ->
+                    getBridge().getWebView().evaluateJavascript(
+                        "window.onHintRewardEarned && window.onHintRewardEarned()", null)
+                );
             }
         });
     }
@@ -137,8 +238,22 @@ public class MainActivity extends BridgeActivity {
     // ── JS ↔ Java bridge ──────────────────────────────────
     private class AdsJsBridge {
         @JavascriptInterface
-        public void showInterstitial() {
-            showInterstitialInternal();
-        }
+        public void showInterstitial() { showInterstitialInternal(); }
+
+        @JavascriptInterface
+        public void showRewarded() { showRewardedInternal(); }
+
+        @JavascriptInterface
+        public boolean isRewardedReady() { return mRewardedAd != null; }
+
+        // Play Games getters (called from online.js)
+        @JavascriptInterface
+        public boolean isPlayGamesSignedIn() { return pgSignedIn; }
+
+        @JavascriptInterface
+        public String getPlayGamesId() { return pgPlayerId != null ? pgPlayerId : ""; }
+
+        @JavascriptInterface
+        public String getPlayGamesName() { return pgPlayerName != null ? pgPlayerName : ""; }
     }
 }

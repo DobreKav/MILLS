@@ -26,7 +26,7 @@ class Renderer {
     const off = document.createElement('canvas');
     off.width = off.height = 128;
     const g = off.getContext('2d');
-    g.fillStyle = '#2a1a08';
+    g.fillStyle = '#7a5228';
     g.fillRect(0, 0, 128, 128);
 
     // Wood grain lines
@@ -95,6 +95,7 @@ class Renderer {
     this._drawValidMoves(ctx);
     this._drawPieces(ctx, dt);
     this._drawSelectedRing(ctx, dt);
+    this._drawHint(ctx);
     this._updateParticles(dt);
     this._drawParticles();
   }
@@ -107,13 +108,13 @@ class Renderer {
     ctx.clip();
 
     // Wood texture
-    ctx.fillStyle = this.boardPattern || '#2a1a08';
+    ctx.fillStyle = this.boardPattern || '#7a5228';
     ctx.fillRect(0, 0, size, size);
 
     // Vignette overlay
     const vig = ctx.createRadialGradient(size/2,size/2,size*0.2,size/2,size/2,size*0.72);
     vig.addColorStop(0, 'rgba(0,0,0,0)');
-    vig.addColorStop(1, 'rgba(0,0,0,0.55)');
+    vig.addColorStop(1, 'rgba(0,0,0,0.25)');
     ctx.fillStyle = vig;
     ctx.fillRect(0, 0, size, size);
 
@@ -393,6 +394,61 @@ class Renderer {
   }
 
   clearMillHighlight() { this.millNodes.clear(); }
+
+  /** Flash a hint move on the board for ~5 seconds */
+  flashHint(move) {
+    this._hintMove    = move;
+    this._hintStartTs = performance.now();
+    this._hintDurationMs = 5000;
+  }
+
+  _clearHintIfExpired() {
+    if (!this._hintMove) return;
+    if (performance.now() - this._hintStartTs > this._hintDurationMs) {
+      this._hintMove = null;
+    }
+  }
+
+  _drawHint(ctx) {
+    this._clearHintIfExpired();
+    if (!this._hintMove) return;
+    const elapsed = (performance.now() - this._hintStartTs) / 1000;
+    const pulse   = 0.5 + 0.5 * Math.sin(elapsed * 5);
+    const r       = this.nodeRadius();
+    ctx.save();
+    ctx.shadowColor = '#00e5ff';
+    ctx.shadowBlur  = 18 * pulse;
+    ctx.strokeStyle = `rgba(0,200,255,${0.6 + 0.4 * pulse})`;
+    ctx.lineWidth   = 3;
+    // "from" node (piece to move)
+    const fromNode = this._hintMove.from ?? this._hintMove.node;
+    if (fromNode !== undefined && fromNode !== null) {
+      const p = this._pos(fromNode);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r + 5 + pulse * 4, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    // "to" node (destination)
+    const toNode = this._hintMove.to;
+    if (toNode !== undefined && toNode !== null) {
+      const p = this._pos(toNode);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r + 5 + pulse * 4, 0, Math.PI * 2);
+      ctx.stroke();
+      // Arrow line from → to
+      if (fromNode !== undefined && fromNode !== null) {
+        const pf = this._pos(fromNode);
+        ctx.setLineDash([6, 4]);
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(pf.x, pf.y);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+    ctx.restore();
+  }
 
   _updateParticles(dt) {
     for (let i = this.particles.length - 1; i >= 0; i--) {

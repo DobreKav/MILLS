@@ -4,4 +4,7 @@
     <string name="title_activity_main">Mills</string>
     <string name="package_name">com.mills.ninemenmorris</string>
     <string name="custom_url_scheme">com.mills.ninemenmorris</string>
+    <!-- TODO: Replace with your real Games App ID from Play Console
+         Play Console → Play Games Services → Setup → App ID (numeric, e.g. 123456789012) -->
+    <string name="game_services_project_id" translatable="false">000000000000</string>
 </resources>

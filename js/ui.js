@@ -205,20 +205,21 @@ class UIManager {
     const title  = document.getElementById('gameover-title');
     const reason = document.getElementById('gameover-reason');
     const badge  = document.getElementById('gameover-badge');
-    const p1n = this.mode === 'ai' ? 'You' : 'Player 1';
-    const p2n = this.mode === 'ai' ? 'AI'  : 'Player 2';
-    const names = [null, p1n, p2n];
-    if (title)  title.textContent  = `${names[state.winner]} Wins!`;
-    if (reason) reason.textContent = state.winReason || '';
-    if (badge) {
-      badge.className = `gameover-badge gameover-badge--p${state.winner}`;
+
+    let winnerLabel;
+    if (this.mode === 'online' && typeof onlineManager !== 'undefined') {
+      winnerLabel = state.winner === onlineManager.myPlayer ? 'You Win! 🏆' : 'You Lose';
+    } else {
+      const p1n = this.mode === 'ai' ? 'You' : 'Player 1';
+      const p2n = this.mode === 'ai' ? 'AI'  : 'Player 2';
+      winnerLabel = `${[null, p1n, p2n][state.winner]} Wins!`;
     }
+
+    if (title)  title.textContent  = winnerLabel;
+    if (reason) reason.textContent = state.winReason || '';
+    if (badge)  badge.className    = `gameover-badge gameover-badge--p${state.winner}`;
     this.openModal('gameover');
     SoundManager.play('win');
-    // Show interstitial on Android (via native JS bridge)
-    if (window.MillsAds) {
-      window.MillsAds.showInterstitial();
-    }
   }
 
   /* ── Settings persistence ─────────────────── */
@@ -265,8 +266,9 @@ class UIManager {
       if (el) el.addEventListener('click', () => { SoundManager.unlock(); SoundManager.play('click'); fn(); });
     };
 
-    on('btn-vs-ai',      () => { this.mode = 'ai';  this._onAction?.({ type: 'start', mode: 'ai' }); });
-    on('btn-vs-player',  () => { this.mode = 'pvp'; this._onAction?.({ type: 'start', mode: 'pvp' }); });
+    on('btn-vs-ai',      () => { this.mode = 'ai';     this._onAction?.({ type: 'start', mode: 'ai' }); });
+    on('btn-vs-player',  () => { this.mode = 'pvp';    this._onAction?.({ type: 'start', mode: 'pvp' }); });
+    on('btn-online',     () => { this.mode = 'online'; this._onAction?.({ type: 'start', mode: 'online' }); });
     on('btn-how-to-play',() => this.openModal('howtoplay'));
     on('btn-settings',   () => this.openModal('settings'));
   }
@@ -336,6 +338,21 @@ class UIManager {
     const Phase = state.getPhase();
     const p     = state.currentPlayer;
     const isAI  = mode === 'ai' && p === aiPlayer;
+
+    // Online mode — determine whose turn it is
+    if (mode === 'online' && typeof onlineManager !== 'undefined') {
+      const isMyTurn = p === onlineManager.myPlayer;
+      if (state.status === GS.REMOVE) {
+        return isMyTurn ? 'Mill! Select an opponent piece to capture.' : "Opponent is capturing a piece…";
+      }
+      if (state.status === GS.WIN) return '';
+      const ph = state.currentPhase();
+      if (!isMyTurn) return "Opponent's turn…";
+      if (ph === Phase.PLACEMENT) return `Your turn: Place a piece (${state.piecesToPlace[p]} left)`;
+      if (ph === Phase.FLYING)    return 'Your turn: Flying! Move to any empty space.';
+      if (state.selectedNode !== -1) return 'Your turn: Select a destination.';
+      return 'Your turn: Select a piece to move.';
+    }
 
     if (state.status === GS.REMOVE) {
       return isAI ? 'AI is choosing a piece to capture…' : 'Mill! Select an opponent piece to capture.';

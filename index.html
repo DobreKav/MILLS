@@ -37,6 +37,9 @@
         <button class="btn-menu" id="btn-vs-player">
           <span class="btn-icon">👥</span> Two Players
         </button>
+        <button class="btn-menu" id="btn-online">
+          <span class="btn-icon">🌐</span> Play Online
+        </button>
         <button class="btn-menu" id="btn-how-to-play">
           <span class="btn-icon">📖</span> How to Play
         </button>
@@ -106,6 +109,7 @@
           <div id="hud-phase">Placement Phase</div>
         </div>
         <p id="hud-message" aria-live="polite">Place your piece</p>
+        <button id="btn-hint" title="Watch an ad for a hint">💡 Hint</button>
       </div>
 
     </div><!-- #game-container -->
@@ -247,16 +251,33 @@
   </div>
 
   <!-- ═══════════════════════════════════════════════
+       MATCHMAKING OVERLAY (shown while searching)
+  ═══════════════════════════════════════════════ -->
+  <div id="overlay-matchmaking" hidden aria-live="polite">
+    <div class="matchmaking-box">
+      <div class="matchmaking-spinner"></div>
+      <p id="matchmaking-status">Searching for opponent…</p>
+      <button class="btn-modal" id="btn-cancel-search">Cancel</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════
        BANNER AD SLOT (90px, bottom-fixed)
        AdMob native banner overlays this on Android
   ═══════════════════════════════════════════════ -->
   <div id="banner-ad" aria-hidden="true"></div>
+
+  <!-- Firebase SDK (for online multiplayer) -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 
   <!-- Scripts — load order matters -->
   <script src="js/game.js"></script>
   <script src="js/ai.js"></script>
   <script src="js/renderer.js"></script>
   <script src="js/ui.js"></script>
+  <script src="js/online.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>

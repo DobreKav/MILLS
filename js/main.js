@@ -12,13 +12,14 @@ const AI_DELAY   = 200;  // ms before AI move executes
    No JS initialisation needed — the native banner overlays the bottom of the WebView. */
 
 /* ── App state ──────────────────────────────────────────── */
-let mode         = 'ai';  // 'ai' | 'pvp'
+let mode         = 'ai';  // 'ai' | 'pvp' | 'online'
 let aiPlayerNum  = 2;
 let gameRunning  = false;
 let aiThinking   = false;
 let aiTimer      = null;
 let lastTime     = 0;
 let _hudKey      = '';   // track state changes to avoid per-frame DOM writes
+let _gamesPlayed = 0;    // interstitial counter — show every 3rd completed game
 
 function _getHudKey(s) {
   return `${s.currentPlayer}|${s.status}|${s.piecesToPlace[1]}|${s.piecesToPlace[2]}|${s.captures[1]}|${s.captures[2]}|${s.board.join('')}`;
@@ -51,6 +52,19 @@ document.addEventListener('DOMContentLoaded', () => {
   // Canvas click
   boardCanvas.addEventListener('click', onBoardClick);
   boardCanvas.addEventListener('touchend', onBoardTouch, { passive: false });
+
+  // Hint button
+  document.getElementById('btn-hint')?.addEventListener('click', onHintClick);
+
+  // Rewarded ad callback (called from Java after reward earned)
+  window.onHintRewardEarned = showHint;
+
+  // Matchmaking cancel button
+  document.getElementById('btn-cancel-search')?.addEventListener('click', () => {
+    onlineManager.cancelSearch();
+    _hideMatchmaking();
+    goToMenu();
+  });
 
   // Start render loop
   requestAnimationFrame(loop);
@@ -108,31 +122,39 @@ function startGame(gameMode) {
 
   uiManager.showHints = document.getElementById('setting-hints')?.checked ?? true;
 
-  const p1Name = mode === 'ai' ? 'You'      : 'Player 1';
-  const p2Name = mode === 'ai' ? 'AI'       : 'Player 2';
-  uiManager.setPlayerNames(p1Name, p2Name);
-
-  // Topbar badge: show difficulty when vs AI
+  // Topbar badge
   const badge = document.getElementById('topbar-badge');
   if (badge) {
     if (mode === 'ai') {
       const diffNames = { '1': 'Easy', '3': 'Medium', '5': 'Hard' };
       badge.textContent = diffNames[String(diff)] || 'Medium';
-      badge.hidden = false;
+      badge.className   = 'topbar-badge';
+      badge.hidden      = false;
+    } else if (mode === 'online') {
+      badge.textContent = '🌐 Online';
+      badge.className   = 'topbar-badge topbar-badge--online';
+      badge.hidden      = false;
     } else {
       badge.hidden = true;
     }
   }
 
+  if (mode === 'online') {
+    _startOnlineGame();
+    return; // player names + gameRunning set after match found
+  }
+
+  const p1Name = mode === 'ai' ? 'You'      : 'Player 1';
+  const p2Name = mode === 'ai' ? 'AI'       : 'Player 2';
+  uiManager.setPlayerNames(p1Name, p2Name);
+
   gameRunning = true;
   aiThinking  = false;
-  _hudKey     = '';    // force HUD refresh on new game
+  _hudKey     = '';
   clearTimeout(aiTimer);
 
   uiManager.showScreen('game');
-  handleResize(); // recalculate canvas size after screen change
-
-  // If AI goes first (shouldn't normally, AI is player 2)
+  handleResize();
   scheduleAIIfNeeded();
 }
 
@@ -141,7 +163,107 @@ function restartGame() { startGame(mode); }
 function goToMenu() {
   gameRunning = false;
   clearTimeout(aiTimer);
+  if (mode === 'online') onlineManager.leaveGame();
   uiManager.showScreen('menu');
+}
+
+/* ── Online game flow ───────────────────────────────────── */
+function _showMatchmaking(msg) {
+  const el = document.getElementById('overlay-matchmaking');
+  const st = document.getElementById('matchmaking-status');
+  if (el) el.hidden = false;
+  if (st) st.textContent = msg || 'Searching for opponent…';
+}
+function _hideMatchmaking() {
+  const el = document.getElementById('overlay-matchmaking');
+  if (el) el.hidden = true;
+}
+
+async function _startOnlineGame() {
+  if (!onlineManager.isConfigured()) {
+    alert('Online play not configured.\nOpen js/online.js and fill in your Firebase config.');
+    goToMenu();
+    return;
+  }
+
+  uiManager.showScreen('game');
+  handleResize();
+  _showMatchmaking('Connecting…');
+
+  try {
+    await onlineManager.init();
+  } catch (e) {
+    _hideMatchmaking();
+    alert('Could not connect to server.\nCheck your internet connection.');
+    goToMenu();
+    return;
+  }
+
+  _showMatchmaking('Searching for opponent…');
+
+  onlineManager.onMove(applyRemoteMove);
+  onlineManager.onOpponentLeft(() => {
+    if (!gameRunning) return;
+    gameRunning = false;
+    _hideMatchmaking();
+    alert('Opponent disconnected.');
+    goToMenu();
+  });
+
+  await onlineManager.findMatch(
+    async (myPlayer) => {
+      // Match found — fetch opponent's gamer name
+      _hideMatchmaking();
+      const oppName  = await onlineManager.getOpponentName();
+      const p1Name   = myPlayer === 1 ? (onlineManager.pgName || 'You') : oppName;
+      const p2Name   = myPlayer === 2 ? (onlineManager.pgName || 'You') : oppName;
+      uiManager.setPlayerNames(p1Name, p2Name);
+      gameRunning = true;
+      aiThinking  = false;
+      _hudKey     = '';
+    },
+    () => {
+      _showMatchmaking('Waiting for opponent…');
+    }
+  );
+}
+
+/* ── Apply a remote (opponent) move ─────────────────────── */
+function applyRemoteMove(mv) {
+  if (!gameRunning) return;
+
+  if (mv.type === 'place') {
+    const res = gameState.place(mv.to);
+    if (res.ok) {
+      SoundManager.play('place');
+      renderer.animatePlace(mv.to);
+      if (res.mill) {
+        renderer.spawnMillParticles(res.millNodes);
+        SoundManager.play('mill');
+      } else if (res.win) {
+        onGameWin();
+      }
+    }
+  } else if (mv.type === 'move') {
+    const res = gameState.move(mv.from, mv.to);
+    if (res.ok) {
+      SoundManager.play('move');
+      if (res.mill) {
+        renderer.spawnMillParticles(res.millNodes);
+        SoundManager.play('mill');
+      } else if (res.win) {
+        onGameWin();
+      }
+    }
+  } else if (mv.type === 'remove') {
+    const res = gameState.remove(mv.node);
+    if (res.ok) {
+      renderer.spawnCaptureParticles(mv.node);
+      SoundManager.play('capture');
+      renderer.clearMillHighlight();
+      if (res.win) onGameWin();
+    }
+  }
 }
 
 /* ── Undo ────────────────────────────────────────────────── */
@@ -191,6 +313,9 @@ function handleBoardInput(x, y) {
   // Don't accept input if it's AI's turn
   if (mode === 'ai' && gameState.currentPlayer === aiPlayerNum) return;
 
+  // Don't accept input if it's opponent's turn in online mode
+  if (mode === 'online' && gameState.currentPlayer !== onlineManager.myPlayer) return;
+
   const node = renderer.nodeAt(x, y);
   if (node === -1) {
     // Click on empty area — deselect
@@ -210,6 +335,7 @@ function handleBoardInput(x, y) {
     renderer.spawnCaptureParticles(node);
     SoundManager.play('capture');
     renderer.clearMillHighlight();
+    if (mode === 'online') onlineManager.sendMove({ type: 'remove', node });
     if (res.win) { onGameWin(); return; }
     scheduleAIIfNeeded();
     return;
@@ -225,6 +351,7 @@ function handleBoardInput(x, y) {
     if (!res.ok) { SoundManager.play('invalid'); return; }
     SoundManager.play('place');
     renderer.animatePlace(node);
+    if (mode === 'online') onlineManager.sendMove({ type: 'place', to: node });
     if (res.mill) {
       renderer.spawnMillParticles(res.millNodes);
       SoundManager.play('mill');
@@ -245,6 +372,7 @@ function handleBoardInput(x, y) {
         const res  = gameState.move(from, node);
         if (!res.ok) { SoundManager.play('invalid'); return; }
         SoundManager.play('move');
+        if (mode === 'online') onlineManager.sendMove({ type: 'move', from, to: node });
         if (res.mill) {
           renderer.spawnMillParticles(res.millNodes);
           SoundManager.play('mill');
@@ -276,7 +404,7 @@ function handleBoardInput(x, y) {
 /* ── AI turn scheduling ──────────────────────────────────── */
 function scheduleAIIfNeeded() {
   if (!gameRunning) return;
-  if (mode !== 'ai') return;
+  if (mode !== 'ai') return;  // AI only in 'ai' mode, not pvp/online
 
   const GS = gameState.getStatus();
   if (gameState.status === GS.WIN) return;
@@ -363,5 +491,43 @@ function doAIMove() {
 function onGameWin() {
   gameRunning = false;
   renderer.clearMillHighlight();
-  setTimeout(() => uiManager.showGameOver(gameState), 600);
+
+  _gamesPlayed++;
+  const showAd = (_gamesPlayed % 3 === 0) && window.MillsAds;
+  const delay  = showAd ? 0 : 600;
+
+  if (showAd) {
+    window.MillsAds.showInterstitial();
+  }
+
+  setTimeout(() => uiManager.showGameOver(gameState), delay + 600);
+}
+
+/* ── Hint (rewarded ad) ─────────────────────────────────── */
+let _hintCooldown = false;
+
+function onHintClick() {
+  if (!gameRunning || _hintCooldown) return;
+  _hintCooldown = true;
+  const btn = document.getElementById('btn-hint');
+  if (btn) btn.disabled = true;
+
+  if (window.MillsAds) {
+    window.MillsAds.showRewarded(); // Java calls onHintRewardEarned() after reward
+  } else {
+    showHint(); // browser / dev fallback — give hint for free
+  }
+}
+
+function showHint() {
+  const best = ai.getBestMove(gameState, 3);
+  if (best !== null && best !== undefined) {
+    renderer.flashHint(best);
+  }
+  // Re-enable after 8 s so player can't spam
+  setTimeout(() => {
+    _hintCooldown = false;
+    const btn = document.getElementById('btn-hint');
+    if (btn) btn.disabled = false;
+  }, 8000);
 }
